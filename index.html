@@ -367,8 +367,8 @@
             container.innerHTML = tableHtml;
         };
 
-                // ==========================================
-        // Gemini AI 解析與圖片上傳邏輯 (修復防卡死版本)
+        // ==========================================
+        // Gemini AI 解析與圖片上傳邏輯 (加入嚴格資料正規化)
         // ==========================================
         window.processImageAI = async function() {
             const fileInput = document.getElementById('schedule-file');
@@ -388,7 +388,6 @@
             statusDiv.innerText = "⏳ 正在處理圖片並呼叫 Gemini AI 解析，請稍候...";
 
             try {
-                // 【修正點 1】將圖片讀取封裝成 Promise，確保系統能正確等待並捕捉錯誤
                 const base64Data = await new Promise((resolve, reject) => {
                     const reader = new FileReader();
                     reader.readAsDataURL(file);
@@ -399,11 +398,12 @@
                 const mimeType = file.type;
                 const currentYear = new Date().getFullYear();
 
+                // 強化 Prompt 提示詞：嚴格規定補零，避免日期比對失敗
                 const promptText = `這是一張排班表圖片。請精準找出「林義為」與「潘俞蓁」兩人的排班資訊。
 請直接回傳純 JSON 陣列，不要包含 Markdown 標記或其他文字。
 格式：[{"date": "YYYY-MM-DD", "name": "員工姓名", "shift": "班表內容"}]
 規則：
-1. 日期請結合表頭的月日，並預設年份為 ${currentYear}，格式必須為 YYYY-MM-DD。
+1. 日期請結合表頭的月日，並預設年份為 ${currentYear}，格式必須為 YYYY-MM-DD (月份與日期若為個位數，務必補零，例如 ${currentYear}-07-05)。
 2. 若班表為「休」、「指休」、「公」或空白，請將 shift 統一設為「休假」。
 3. 若有排班，請完整擷取地點與時間，例如「愛國/四維 1900-2200」或「中洲/光華 0800~1100」。
 4. 只需回傳林義為與潘俞蓁的資料，無資料則回傳 []。`;
@@ -434,7 +434,6 @@
                 let textResponse = resData.candidates[0]?.content?.parts[0]?.text || '[]';
                 textResponse = textResponse.trim().replace(/```json/g, '').replace(/```/g, '');
                 
-                // 【修正點 2】嚴格檢查 JSON 格式，避免 AI 亂回話導致程式崩潰
                 let scheduleData;
                 try {
                     scheduleData = JSON.parse(textResponse);
@@ -449,6 +448,20 @@
                 const recordsToUpsert = [];
                 scheduleData.forEach(row => {
                     if (row.date && row.name && row.shift) {
+                        
+                        // 【關鍵修復 1】正規化日期：強制補齊 0 (例如將 2026-7-5 變成 2026-07-05)
+                        let formattedDate = row.date.replace(/\//g, '-');
+                        let dateParts = formattedDate.split('-');
+                        if (dateParts.length === 3) {
+                            formattedDate = `${dateParts[0]}-${dateParts[1].padStart(2, '0')}-${dateParts[2].padStart(2, '0')}`;
+                        }
+
+                        // 【關鍵修復 2】正規化姓名：強制移除所有空白 (避免 AI 回傳 "林 義為" 導致抓不到資料)
+                        let cleanName = row.name.replace(/\s+/g, '');
+                        
+                        // 只處理特定員工，避免寫入不必要的資料
+                        if (!['林義為', '潘俞蓁'].includes(cleanName)) return;
+
                         let detail = row.shift;
                         if (detail !== '休假') {
                             if (/(05|06|07|08|09|10|11|12)\d{2}/.test(detail)) {
@@ -459,9 +472,10 @@
                                 detail = '有班 ' + detail;
                             }
                         }
+                        
                         recordsToUpsert.push({
-                            shift_date: row.date,
-                            person_name: row.name,
+                            shift_date: formattedDate,
+                            person_name: cleanName,
                             shift_detail: detail
                         });
                     }
@@ -487,21 +501,18 @@
                 }
 
                 fileInput.value = ""; // 清空上傳欄位
-                window.loadSchedule(); // 更新下方表格
+                window.loadSchedule(); // 重新讀取並刷新今日班表表格
 
             } catch (error) {
-                // 【修正點 3】如果發生任何錯誤，把錯誤印在畫面上而不是卡住
                 statusDiv.style.background = "#f8d7da";
                 statusDiv.style.color = "#721c24";
                 statusDiv.style.borderLeftColor = "#dc3545";
                 statusDiv.innerText = `❌ 錯誤：${error.message}`;
                 console.error(error);
             } finally {
-                // 無論成功或失敗，都把按鈕恢復可點擊狀態
                 uploadBtn.disabled = false;
             }
         };
-
 
         // 初始化
         document.addEventListener('DOMContentLoaded', () => {
