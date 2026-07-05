@@ -104,26 +104,28 @@
         .delete-btn { background: #e74c3c; }
         .delete-btn:hover { background: #c0392b; }
 
-        /* 👑 今日專屬排版 */
+        /* 👑 班表排版 (支援多日) */
         .table-responsive {
             width: 100%; background: white; border-radius: 12px;
             box-shadow: 0 4px 15px rgba(0,0,0,0.06); margin-bottom: 30px; overflow: hidden;
         }
         .daily-table {
             width: 100%; border-collapse: collapse; text-align: center;
-            font-size: 1.25rem; table-layout: auto;
+            font-size: 1.15rem; table-layout: auto;
         }
         .daily-table th, .daily-table td {
-            padding: 20px 25px; border-bottom: 1px solid #ecf0f1; word-break: keep-all;
+            padding: 15px 15px; border-bottom: 1px solid #ecf0f1; word-break: keep-all;
         }
         .daily-table th { background-color: #f8f9fa; color: #34495e; font-weight: 700; }
         .daily-table tr:last-child td { border-bottom: none; }
+        .daily-table tr:hover { background-color: #fcfcfc; }
+        .date-col { font-weight: bold; color: #7f8c8d; font-size: 1rem; }
         .person-name { font-weight: bold; color: #2c3e50; white-space: nowrap; }
         
         /* 班別高亮標示 */
-        .shift-morning { background-color: #e8f4f8; color: #2980b9; font-weight: 600; } 
-        .shift-night { background-color: #fdf2e9; color: #d35400; font-weight: 600; }   
-        .shift-off { background-color: #fdedec; color: #c0392b; font-weight: 600; }     
+        .shift-morning { background-color: #e8f4f8; color: #2980b9; font-weight: 600; border-radius: 6px; padding: 4px 8px; } 
+        .shift-night { background-color: #fdf2e9; color: #d35400; font-weight: 600; border-radius: 6px; padding: 4px 8px; }   
+        .shift-off { background-color: #fdedec; color: #c0392b; font-weight: 600; border-radius: 6px; padding: 4px 8px; }     
         .shift-none { color: #bdc3c7; font-weight: bold; }
 
         /* 懸浮按鈕 FAB */
@@ -157,7 +159,7 @@
         #ocr-status { 
             background: #e1f5fe; color: #0277bd; padding: 15px; border-radius: 8px; 
             font-weight: 600; margin-bottom: 25px; border-left: 5px solid #03a9f4; 
-            font-size: 1.05rem; display: flex; align-items: center; gap: 10px;
+            font-size: 1.05rem; line-height: 1.5;
         }
     </style>
 </head>
@@ -185,14 +187,14 @@
 
     <div class="upload-section">
         <h3>📸 上傳班表圖片 AI 辨識</h3>
-        <p style="margin: 0 0 10px 0; color: #7f8c8d; font-size: 0.95rem;">上傳今日或最新班表照片，系統將透過 Gemini 自動解析林義為與潘俞蓁的排班資訊並存入雲端資料庫。</p>
+        <p style="margin: 0 0 10px 0; color: #7f8c8d; font-size: 0.95rem;">上傳班表照片，系統將透過 Gemini 自動解析排班資訊並存入雲端。</p>
         <div class="file-input-wrapper">
             <input type="file" id="schedule-file" accept="image/png, image/jpeg, image/webp" />
             <button class="upload-btn" id="upload-btn" onclick="window.processImageAI()">上傳並解析</button>
         </div>
     </div>
 
-    <h2 id="schedule-title">📅 今日班表自動同步</h2>
+    <h2 id="schedule-title">📅 近期班表</h2>
     <div id="ocr-status">✔️ 系統為最新狀態。如需更新請點擊上方按鈕上傳照片。</div>
     <div id="schedule-container"></div>
 
@@ -304,7 +306,7 @@
         };
 
         // ==========================================
-        // 班表讀取邏輯 (Supabase)
+        // 班表讀取邏輯 (全面改為：抓取「今天含以後」的近期班表)
         // ==========================================
         window.loadSchedule = async function() {
             const container = document.getElementById('schedule-container');
@@ -316,50 +318,48 @@
             const day = String(d.getDate()).padStart(2, '0');
             const todayStr = `${year}-${month}-${day}`;
             
-            titleEl.innerHTML = `📅 今日班表 (${todayStr})`;
+            titleEl.innerHTML = `📅 近期班表 <span style="font-size:1rem; font-weight:normal; color:#7f8c8d;">(自 ${todayStr} 起)</span>`;
 
+            // 【變更點】：從 .eq() 改為 .gte()，這樣未來的日期才抓得出來，並依照日期升冪排序
             const { data, error } = await supabase
                 .from('shift_schedule')
                 .select('*')
                 .in('person_name', ['林義為', '潘俞蓁'])
-                .eq('shift_date', todayStr);
+                .gte('shift_date', todayStr)
+                .order('shift_date', { ascending: true });
 
             if (error) {
-                container.innerHTML = `<div style="color:red; background:white; padding:15px; border-radius:12px;">今日班表載入失敗：${error.message}</div>`;
+                container.innerHTML = `<div style="color:red; background:white; padding:15px; border-radius:12px;">班表載入失敗：${error.message}</div>`;
                 return;
             }
 
             if (!data || data.length === 0) {
-                container.innerHTML = `<div style="color:#7f8c8d; background:white; padding:20px; border-radius:12px; text-align:center; font-size:1.1rem;">今日 (${todayStr}) 尚無班表資料，或尚未排班。</div>`;
+                container.innerHTML = `<div style="color:#7f8c8d; background:white; padding:20px; border-radius:12px; text-align:center; font-size:1.1rem;">目前沒有 ${todayStr} 之後的班表資料。</div>`;
                 return;
             }
 
-            const people = ['林義為', '潘俞蓁'];
-            const scheduleMap = { '林義為': '-', '潘俞蓁': '-' };
-            
-            data.forEach(item => {
-                if (scheduleMap[item.person_name] !== undefined) {
-                    scheduleMap[item.person_name] = item.shift_detail;
-                }
-            });
-
             let tableHtml = '<div class="table-responsive"><table class="daily-table">';
-            tableHtml += '<thead><tr><th>門市人員</th><th>班表地點與時間</th></tr></thead><tbody>';
+            tableHtml += '<thead><tr><th>日期</th><th>門市人員</th><th>班別與時間</th></tr></thead><tbody>';
 
-            people.forEach(person => {
-                const detail = scheduleMap[person];
+            data.forEach(item => {
+                let detail = item.shift_detail;
                 let shiftClass = 'shift-none';
-                let displayText = detail;
                 
-                if (detail !== '-') {
+                if (detail !== '休假' && detail !== '-') {
                     if (detail.includes('早')) shiftClass = 'shift-morning';
                     else if (detail.includes('晚')) shiftClass = 'shift-night';
                     else if (detail.includes('休') || detail.includes('公')) shiftClass = 'shift-off';
+                } else {
+                    shiftClass = 'shift-off';
                 }
-                
+
+                // 為了排版好看，日期只顯示 MM-DD
+                const shortDate = item.shift_date.substring(5); 
+
                 tableHtml += `<tr>
-                    <td class="person-name">${person}</td>
-                    <td class="shift-detail ${shiftClass}">${displayText}</td>
+                    <td class="date-col">${shortDate}</td>
+                    <td class="person-name">${item.person_name}</td>
+                    <td><span class="${shiftClass}">${detail}</span></td>
                 </tr>`;
             });
 
@@ -368,7 +368,7 @@
         };
 
         // ==========================================
-        // Gemini AI 解析與圖片上傳邏輯 (加入嚴格資料正規化)
+        // Gemini AI 解析與圖片上傳邏輯 
         // ==========================================
         window.processImageAI = async function() {
             const fileInput = document.getElementById('schedule-file');
@@ -398,7 +398,6 @@
                 const mimeType = file.type;
                 const currentYear = new Date().getFullYear();
 
-                // 強化 Prompt 提示詞：嚴格規定補零，避免日期比對失敗
                 const promptText = `這是一張排班表圖片。請精準找出「林義為」與「潘俞蓁」兩人的排班資訊。
 請直接回傳純 JSON 陣列，不要包含 Markdown 標記或其他文字。
 格式：[{"date": "YYYY-MM-DD", "name": "員工姓名", "shift": "班表內容"}]
@@ -449,17 +448,13 @@
                 scheduleData.forEach(row => {
                     if (row.date && row.name && row.shift) {
                         
-                        // 【關鍵修復 1】正規化日期：強制補齊 0 (例如將 2026-7-5 變成 2026-07-05)
                         let formattedDate = row.date.replace(/\//g, '-');
                         let dateParts = formattedDate.split('-');
                         if (dateParts.length === 3) {
                             formattedDate = `${dateParts[0]}-${dateParts[1].padStart(2, '0')}-${dateParts[2].padStart(2, '0')}`;
                         }
 
-                        // 【關鍵修復 2】正規化姓名：強制移除所有空白 (避免 AI 回傳 "林 義為" 導致抓不到資料)
                         let cleanName = row.name.replace(/\s+/g, '');
-                        
-                        // 只處理特定員工，避免寫入不必要的資料
                         if (!['林義為', '潘俞蓁'].includes(cleanName)) return;
 
                         let detail = row.shift;
@@ -489,10 +484,13 @@
                     
                     if(upsertError) throw new Error("寫入 Supabase 失敗: " + upsertError.message);
                     
+                    // 【除錯利器】：直接印出 AI 到底抓到了哪些日期
+                    const uniqueDates = [...new Set(recordsToUpsert.map(r => r.shift_date))].sort().join(', ');
+                    
                     statusDiv.style.background = "#d4edda";
                     statusDiv.style.color = "#155724";
                     statusDiv.style.borderLeftColor = "#28a745";
-                    statusDiv.innerText = `✅ 成功！已為您同步 ${recordsToUpsert.length} 筆資料至雲端！`;
+                    statusDiv.innerHTML = `✅ 成功！已為您同步 ${recordsToUpsert.length} 筆資料至雲端！<br><span style="font-size:0.9rem; color:#28a745; margin-top:5px; display:inline-block;">🔍 <b>本次寫入的日期包含：</b><br>${uniqueDates}</span>`;
                 } else {
                     statusDiv.style.background = "#e1f5fe";
                     statusDiv.style.color = "#0277bd";
@@ -500,8 +498,8 @@
                     statusDiv.innerText = "✔️ AI 辨識完畢，但這張圖片中沒有找到林義為或潘俞蓁的班表資料。";
                 }
 
-                fileInput.value = ""; // 清空上傳欄位
-                window.loadSchedule(); // 重新讀取並刷新今日班表表格
+                fileInput.value = ""; 
+                window.loadSchedule(); 
 
             } catch (error) {
                 statusDiv.style.background = "#f8d7da";
