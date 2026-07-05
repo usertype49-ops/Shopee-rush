@@ -367,8 +367,8 @@
             container.innerHTML = tableHtml;
         };
 
-        // ==========================================
-        // Gemini AI 解析與圖片上傳邏輯
+                // ==========================================
+        // Gemini AI 解析與圖片上傳邏輯 (修復防卡死版本)
         // ==========================================
         window.processImageAI = async function() {
             const fileInput = document.getElementById('schedule-file');
@@ -388,15 +388,18 @@
             statusDiv.innerText = "⏳ 正在處理圖片並呼叫 Gemini AI 解析，請稍候...";
 
             try {
-                // 將檔案轉為 Base64
-                const reader = new FileReader();
-                reader.readAsDataURL(file);
-                reader.onload = async function () {
-                    const base64Data = reader.result.split(',')[1];
-                    const mimeType = file.type;
-                    const currentYear = new Date().getFullYear();
+                // 【修正點 1】將圖片讀取封裝成 Promise，確保系統能正確等待並捕捉錯誤
+                const base64Data = await new Promise((resolve, reject) => {
+                    const reader = new FileReader();
+                    reader.readAsDataURL(file);
+                    reader.onload = () => resolve(reader.result.split(',')[1]);
+                    reader.onerror = () => reject(new Error("本機圖片檔案讀取失敗"));
+                });
 
-                    const promptText = `這是一張排班表圖片。請精準找出「林義為」與「潘俞蓁」兩人的排班資訊。
+                const mimeType = file.type;
+                const currentYear = new Date().getFullYear();
+
+                const promptText = `這是一張排班表圖片。請精準找出「林義為」與「潘俞蓁」兩人的排班資訊。
 請直接回傳純 JSON 陣列，不要包含 Markdown 標記或其他文字。
 格式：[{"date": "YYYY-MM-DD", "name": "員工姓名", "shift": "班表內容"}]
 規則：
@@ -405,89 +408,100 @@
 3. 若有排班，請完整擷取地點與時間，例如「愛國/四維 1900-2200」或「中洲/光華 0800~1100」。
 4. 只需回傳林義為與潘俞蓁的資料，無資料則回傳 []。`;
 
-                    const payload = {
-                        contents: [{
-                            parts: [
-                                { text: promptText },
-                                { inline_data: { mime_type: mimeType, data: base64Data } }
-                            ]
-                        }]
-                    };
+                const payload = {
+                    contents: [{
+                        parts: [
+                            { text: promptText },
+                            { inline_data: { mime_type: mimeType, data: base64Data } }
+                        ]
+                    }]
+                };
 
-                    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`;
-                    
-                    const response = await fetch(url, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify(payload)
-                    });
+                const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`;
+                
+                const response = await fetch(url, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
 
-                    const resData = await response.json();
-                    
-                    if (resData.error) {
-                        throw new Error(`AI API 拒絕: ${resData.error.message}`);
-                    }
+                const resData = await response.json();
+                
+                if (resData.error) {
+                    throw new Error(`AI 拒絕請求: ${resData.error.message}`);
+                }
 
-                    let textResponse = resData.candidates[0].content.parts[0].text || '[]';
-                    textResponse = textResponse.trim().replace(/```json/g, '').replace(/```/g, '');
-                    const scheduleData = JSON.parse(textResponse);
+                let textResponse = resData.candidates[0]?.content?.parts[0]?.text || '[]';
+                textResponse = textResponse.trim().replace(/```json/g, '').replace(/```/g, '');
+                
+                // 【修正點 2】嚴格檢查 JSON 格式，避免 AI 亂回話導致程式崩潰
+                let scheduleData;
+                try {
+                    scheduleData = JSON.parse(textResponse);
+                } catch (e) {
+                    throw new Error("AI 回傳的資料無法辨識：" + textResponse.substring(0, 50) + "...");
+                }
 
-                    if (!Array.isArray(scheduleData)) {
-                        throw new Error("AI 回傳格式異常");
-                    }
+                if (!Array.isArray(scheduleData)) {
+                    throw new Error("AI 回傳格式異常 (非陣列)");
+                }
 
-                    // 處理資料寫入 Supabase (Upsert: 如果日期+人名重複則更新)
-                    const recordsToUpsert = [];
-                    scheduleData.forEach(row => {
-                        if (row.date && row.name && row.shift) {
-                            let detail = row.shift;
-                            if (detail !== '休假') {
-                                if (/(05|06|07|08|09|10|11|12)\d{2}/.test(detail)) {
-                                    detail = '早班 ' + detail;
-                                } else if (/(16|17|18|19|20|21|22|23|00)\d{2}/.test(detail)) {
-                                    detail = '晚班 ' + detail;
-                                } else {
-                                    detail = '有班 ' + detail;
-                                }
+                const recordsToUpsert = [];
+                scheduleData.forEach(row => {
+                    if (row.date && row.name && row.shift) {
+                        let detail = row.shift;
+                        if (detail !== '休假') {
+                            if (/(05|06|07|08|09|10|11|12)\d{2}/.test(detail)) {
+                                detail = '早班 ' + detail;
+                            } else if (/(16|17|18|19|20|21|22|23|00)\d{2}/.test(detail)) {
+                                detail = '晚班 ' + detail;
+                            } else {
+                                detail = '有班 ' + detail;
                             }
-                            recordsToUpsert.push({
-                                shift_date: row.date,
-                                person_name: row.name,
-                                shift_detail: detail
-                            });
                         }
-                    });
-
-                    if (recordsToUpsert.length > 0) {
-                        const { error: upsertError } = await supabase
-                            .from('shift_schedule')
-                            .upsert(recordsToUpsert, { onConflict: 'shift_date,person_name' });
-                        
-                        if(upsertError) throw new Error("資料庫寫入失敗: " + upsertError.message);
+                        recordsToUpsert.push({
+                            shift_date: row.date,
+                            person_name: row.name,
+                            shift_detail: detail
+                        });
                     }
+                });
 
+                // 寫入 Supabase 資料庫
+                if (recordsToUpsert.length > 0) {
+                    const { error: upsertError } = await supabase
+                        .from('shift_schedule')
+                        .upsert(recordsToUpsert, { onConflict: 'shift_date,person_name' });
+                    
+                    if(upsertError) throw new Error("寫入 Supabase 失敗: " + upsertError.message);
+                    
                     statusDiv.style.background = "#d4edda";
                     statusDiv.style.color = "#155724";
                     statusDiv.style.borderLeftColor = "#28a745";
-                    statusDiv.innerText = `✅ 成功辨識並已同步 ${recordsToUpsert.length} 筆資料至資料庫！`;
-                    
-                    fileInput.value = ""; // 清空上傳欄位
-                    window.loadSchedule(); 
-                };
-                
-                reader.onerror = function() {
-                    throw new Error("檔案讀取失敗");
-                };
+                    statusDiv.innerText = `✅ 成功！已為您同步 ${recordsToUpsert.length} 筆資料至雲端！`;
+                } else {
+                    statusDiv.style.background = "#e1f5fe";
+                    statusDiv.style.color = "#0277bd";
+                    statusDiv.style.borderLeftColor = "#03a9f4";
+                    statusDiv.innerText = "✔️ AI 辨識完畢，但這張圖片中沒有找到林義為或潘俞蓁的班表資料。";
+                }
+
+                fileInput.value = ""; // 清空上傳欄位
+                window.loadSchedule(); // 更新下方表格
 
             } catch (error) {
+                // 【修正點 3】如果發生任何錯誤，把錯誤印在畫面上而不是卡住
                 statusDiv.style.background = "#f8d7da";
                 statusDiv.style.color = "#721c24";
                 statusDiv.style.borderLeftColor = "#dc3545";
                 statusDiv.innerText = `❌ 錯誤：${error.message}`;
+                console.error(error);
             } finally {
+                // 無論成功或失敗，都把按鈕恢復可點擊狀態
                 uploadBtn.disabled = false;
             }
         };
+
 
         // 初始化
         document.addEventListener('DOMContentLoaded', () => {
