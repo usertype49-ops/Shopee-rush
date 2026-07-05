@@ -194,7 +194,7 @@
         </div>
     </div>
 
-    <h2 id="schedule-title">📅 近期班表</h2>
+    <h2 id="schedule-title">📅 今日班表</h2>
     <div id="ocr-status">✔️ 系統為最新狀態。如需更新請點擊上方按鈕上傳照片。</div>
     <div id="schedule-container"></div>
 
@@ -208,8 +208,8 @@
         // 🔑 您的 API 金鑰設定
         // ==========================================
         const GEMINI_API_KEY = 'AQ.Ab8RN6KCBOsrBlDsubesKMKcb3komH_sN9qDalBFtmdsEWxaEw';
-        const SUPABASE_URL = 'https://cnkxsxhgdtuxknrzufhv.supabase.co'; // 請填寫 Supabase Project URL
-        const SUPABASE_KEY = 'sb_publishable_QEoX_f9G_Gf9kaaDZpaH-g_ageY5WFK'; // 請填寫 Supabase Anon Key
+        const SUPABASE_URL = 'https://cnkxsxhgdtuxknrzufhv.supabase.co'; 
+        const SUPABASE_KEY = 'sb_publishable_QEoX_f9G_Gf9kaaDZpaH-g_ageY5WFK'; 
         
         const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 
@@ -306,7 +306,7 @@
         };
 
         // ==========================================
-        // 班表讀取邏輯 (全面改為：抓取「今天含以後」的近期班表)
+        // 班表讀取邏輯 (只抓取「當天」的排班資訊)
         // ==========================================
         window.loadSchedule = async function() {
             const container = document.getElementById('schedule-container');
@@ -318,15 +318,15 @@
             const day = String(d.getDate()).padStart(2, '0');
             const todayStr = `${year}-${month}-${day}`;
             
-            titleEl.innerHTML = `📅 近期班表 <span style="font-size:1rem; font-weight:normal; color:#7f8c8d;">(自 ${todayStr} 起)</span>`;
+            titleEl.innerHTML = `📅 今日班表 <span style="font-size:1rem; font-weight:normal; color:#7f8c8d;">(${todayStr})</span>`;
 
-            // 【變更點】：從 .eq() 改為 .gte()，這樣未來的日期才抓得出來，並依照日期升冪排序
+            // 【變更點】：改回 eq('shift_date', todayStr)，嚴格只抓今天的資料
             const { data, error } = await supabase
                 .from('shift_schedule')
                 .select('*')
                 .in('person_name', ['林義為', '潘俞蓁'])
-                .gte('shift_date', todayStr)
-                .order('shift_date', { ascending: true });
+                .eq('shift_date', todayStr)
+                .order('person_name', { ascending: true });
 
             if (error) {
                 container.innerHTML = `<div style="color:red; background:white; padding:15px; border-radius:12px;">班表載入失敗：${error.message}</div>`;
@@ -334,12 +334,12 @@
             }
 
             if (!data || data.length === 0) {
-                container.innerHTML = `<div style="color:#7f8c8d; background:white; padding:20px; border-radius:12px; text-align:center; font-size:1.1rem;">目前沒有 ${todayStr} 之後的班表資料。</div>`;
+                container.innerHTML = `<div style="color:#7f8c8d; background:white; padding:20px; border-radius:12px; text-align:center; font-size:1.1rem;">目前沒有 ${todayStr} 的班表資料，或今日排休。</div>`;
                 return;
             }
 
             let tableHtml = '<div class="table-responsive"><table class="daily-table">';
-            tableHtml += '<thead><tr><th>日期</th><th>門市人員</th><th>班別與時間</th></tr></thead><tbody>';
+            tableHtml += '<thead><tr><th>門市人員</th><th>班別與時間</th></tr></thead><tbody>';
 
             data.forEach(item => {
                 let detail = item.shift_detail;
@@ -353,11 +353,7 @@
                     shiftClass = 'shift-off';
                 }
 
-                // 為了排版好看，日期只顯示 MM-DD
-                const shortDate = item.shift_date.substring(5); 
-
                 tableHtml += `<tr>
-                    <td class="date-col">${shortDate}</td>
                     <td class="person-name">${item.person_name}</td>
                     <td><span class="${shiftClass}">${detail}</span></td>
                 </tr>`;
@@ -484,18 +480,18 @@
                     
                     if(upsertError) throw new Error("寫入 Supabase 失敗: " + upsertError.message);
                     
-                    // 【除錯利器】：直接印出 AI 到底抓到了哪些日期
+                    // 印出 AI 抓到了哪些日期
                     const uniqueDates = [...new Set(recordsToUpsert.map(r => r.shift_date))].sort().join(', ');
                     
                     statusDiv.style.background = "#d4edda";
                     statusDiv.style.color = "#155724";
                     statusDiv.style.borderLeftColor = "#28a745";
-                    statusDiv.innerHTML = `✅ 成功！已為您同步 ${recordsToUpsert.length} 筆資料至雲端！<br><span style="font-size:0.9rem; color:#28a745; margin-top:5px; display:inline-block;">🔍 <b>本次寫入的日期包含：</b><br>${uniqueDates}</span>`;
+                    statusDiv.innerHTML = `✅ 成功！已同步 ${recordsToUpsert.length} 筆資料至雲端！<br><span style="font-size:0.9rem; color:#28a745; margin-top:5px; display:inline-block;">🔍 <b>本次寫入的排班日期包含：</b><br>${uniqueDates}</span>`;
                 } else {
                     statusDiv.style.background = "#e1f5fe";
                     statusDiv.style.color = "#0277bd";
                     statusDiv.style.borderLeftColor = "#03a9f4";
-                    statusDiv.innerText = "✔️ AI 辨識完畢，但這張圖片中沒有找到林義為或潘俞蓁的班表資料。";
+                    statusDiv.innerText = "✔️ AI 辨識完畢，但這張圖片中沒有找到班表資料。";
                 }
 
                 fileInput.value = ""; 
